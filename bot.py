@@ -26,7 +26,7 @@ import requests
 # ==================== الإعدادات الثابتة ====================
 TELEGRAM_BOT_TOKEN = "8933033589:AAGy02S3IKEssxgktTXjdv4ri5l6hHo7Agw"
 ADMIN_ID = 786668548
-CHECK_INTERVAL = 900  # 15 دقيقة بالثواني
+CHECK_INTERVAL = 300  # 5 دقيقة بالثواني
 
 USDT_ADDRESS = "0xb4664dc882e1ae7fb4265b2e5aa21ecffb1624fe".lower()
 NETWORK_NAME = "BNB Smart Chain (BEP20) BSC"
@@ -41,7 +41,7 @@ subscribed_users = {
 pending_requests = {}
 processed_txs = set()
 
-SYMBOLS = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'BNB/USDT:USDT']
+SYMBOLS = ['BTC/USDT:USDT' XRP/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'BNB/USDT:USDT']
 
 # تهيئة منصة بايننس للعقود الآجلة
 exchange = ccxt.binance({
