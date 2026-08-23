@@ -28,7 +28,7 @@ def run_server():
 threading.Thread(target=run_server, daemon=True).start()
 
 # --- الإعدادات الأساسية للبوت ---
-TOKEN = "8933033589:AAGyO2S3IKEssxgktTXjdv4ri5l6hHo7Agw"
+TOKEN = "8933033589:AAHQYl8c5YqisgwZGWajYC63c7rHevS0Ms0"
 ADMIN_ID = 786668548
 DEPOSIT_ADDRESS_BEP20 = "0xYourBnbSmartChainDepositAddressHere"  # عنوان محفظتك على شبكة BNB (BEP20)
 QR_CODE_URL = "https://i.ibb.co/3s8vJ8f/qr-code.jpg"  # رابط صورة الباركود المرفق
