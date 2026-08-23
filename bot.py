@@ -30,7 +30,7 @@ from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandle
 import ccxt.async_support as ccxt
 
 # إعدادات البوت الأساسية
-TOKEN = "8933033589:AAGy02S3IKEssxgktTXjdv4ri5l6hHo7Agw"
+TOKEN = "8933033589:AAHQYl8c5YqisgwZGWajYC63c7rHevS0Ms0"
 ADMIN_ID = 786668548
 CHECK_INTERVAL = 300  # 5 دقائق بالثواني
 
