@@ -13,7 +13,6 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-# --- إعدادات الخادم الوهمي لمنع انقطاع الاتصال على Render ---
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -27,14 +26,12 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
-# --- الإعدادات الأساسية للبوت ---
 TOKEN = "8933033589:AAHQYl8c5YqisgwZGWajYC63c7rHevS0Ms0"
 ADMIN_ID = 786668548
-DEPOSIT_ADDRESS_BEP20 = "0xYourBnbSmartChainDepositAddressHere"  # عنوان محفظتك على شبكة BNB (BEP20)
-QR_CODE_URL = "https://i.ibb.co/3s8vJ8f/qr-code.jpg"  # رابط صورة الباركود المرفق
-CHECK_INTERVAL = 300  # 5 دقائق بالثواني
+DEPOSIT_ADDRESS_BEP20 = "0xYourBnbSmartChainDepositAddressHere"
+QR_CODE_URL = "https://i.ibb.co/3s8vJ8f/qr-code.jpg"
+CHECK_INTERVAL = 300
 
-# أسعار الباقات وقيمتها بالـ USDT
 PLANS = {
     "week": {"days": 7, "price": 15, "name": "أسبوع (15 USDT)"},
     "month": {"days": 30, "price": 50, "name": "شهر (50 USDT)"}
@@ -42,7 +39,6 @@ PLANS = {
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-# --- إعداد قاعدة البيانات المحلية SQLite ---
 def init_db():
     conn = sqlite3.connect("bot_subscribers.db")
     cursor = conn.cursor()
@@ -70,7 +66,6 @@ def db_add_subscriber(user_id: int, days: int):
     conn = sqlite3.connect("bot_subscribers.db")
     cursor = conn.cursor()
     
-    # التحقق مما إذا كان المستخدم لديه اشتراك ساري لتمديد المدة أو البدء من جديد
     cursor.execute("SELECT expiry_date FROM subscribers WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     
@@ -137,12 +132,7 @@ def is_user_active(user_id: int) -> bool:
     expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d %H:%M:%S")
     return datetime.utcnow() < expiry_date
 
-# --- التحقق الترميزي الصارم من المعاملة عبر شبكة BNB Smart Chain (BscScan API المجاني) ---
 def verify_bep20_transaction(tx_hash: str, expected_amount: float) -> tuple:
-    """
-    التحقق الفوري من صحة معاملة USDT (BEP20) على شبكة Binance Smart Chain
-    مع التأكد من عنوان المجاورة، القيمة، وعدم التكرار.
-    """
     tx_hash = tx_hash.strip()
     if not tx_hash.startswith("0x") or len(tx_hash) != 66:
         return False, "❌ صيغة رقم الهاش (TxID) غير صحيحة. يجب أن يبدأ بـ 0x ويحتوي على 66 حرفاً."
@@ -150,7 +140,6 @@ def verify_bep20_transaction(tx_hash: str, expected_amount: float) -> tuple:
     if is_tx_used(tx_hash):
         return False, "❌ هذا الهاش (TxID) تم استخدامه مسبقاً ولا يمكن إعادة تفعيل اشتراك به!"
 
-    # استخدام API عام مجاني للتحقق من المعاملات على شبكة BSC
     url = f"https://api.bscscan.com/api?module=proxy&action=eth_getTransactionByHash&txhash={tx_hash}"
     try:
         response = requests.get(url, timeout=10)
@@ -159,16 +148,6 @@ def verify_bep20_transaction(tx_hash: str, expected_amount: float) -> tuple:
         if "result" not in data or not data["result"]:
             return False, "❌ لم يتم العثور على المعاملة في شبكة BNB. تأكد من صحة الهاش أو انتظر حتى يتم تأكيدها."
 
-        tx = data["result"]
-        to_addr = tx.get("to")
-        
-        # التأكد أن التحويل وُجّه إلى محفظتك مباشرة
-        if not to_addr or to_addr.lower() != DEPOSIT_ADDRESS_BEP20.lower():
-            # ملاحظة: في حال تحويل توكن BEP20 (USDT)، قد يكون الـ to هو عقد الـ USDT وتكون التفاصيل في الـ input data
-            # للتبسيط والصرامة القصوى، سنعتمد أيضاً على جلب تفاصيل تحويلات الـ ERC20/BEP20 عبر BscScan token txs API
-            pass
-
-        # التحقق الدقيق عبر BscScan Token Transfer Events للـ USDT (العقد الشهير لـ USDT على BSC هو 0x55d398326f99059fF775485246999027B3197955)
         token_url = f"https://api.bscscan.com/api?module=account&action=tokentx&contractaddress=0x55d398326f99059fF775485246999027B3197955&txhash={tx_hash}&apikey=YourApiKeyToken"
         t_res = requests.get(token_url, timeout=10).json()
         
@@ -188,14 +167,12 @@ def verify_bep20_transaction(tx_hash: str, expected_amount: float) -> tuple:
             return True, actual_amount
 
         else:
-            # طريقة بديلة في حال كان التحويل عملة BNB مباشرة أو تفاصيل عامة
             return False, "❌ لم يتم التأكد من تحويل عملة USDT (BEP20) المطلوبة بنجاح عبر هذا الهاش."
 
     except Exception as e:
         logging.error(f"Blockchain verification error: {e}")
         return False, "❌ حدث خطأ أثناء الاتصال بشبكة البلوكشين للتحقق. يرجى المحاولة لاحقاً."
 
-# --- تهيئة منصة التداول MEXC Futures ---
 exchange = ccxt.mexc({
     'enableRateLimit': True,
     'options': {
@@ -203,7 +180,7 @@ exchange = ccxt.mexc({
     }
 })
 
-SYMBOLS = ['DOGE/USDT:USDT', 'XRP/USDT:USDT', 'SOL/USDT:USDT']
+CANDIDATE_SYMBOLS = ['DOGE/USDT:USDT', 'XRP/USDT:USDT', 'SOL/USDT:USDT']
 
 async def fetch_ohlcv(symbol, timeframe, limit=100):
     try:
@@ -213,76 +190,62 @@ async def fetch_ohlcv(symbol, timeframe, limit=100):
         logging.error(f"Error fetching {symbol} {timeframe}: {e}")
         return None
 
-async def analyze_market(symbol):
-    try:
-        daily_raw = await fetch_ohlcv(symbol, '1d', 50)
-        h4_raw = await fetch_ohlcv(symbol, '4h', 50)
-        m5_raw = await fetch_ohlcv(symbol, '5m', 50)
+async def find_best_opportunity():
+    best_symbol = None
+    best_score = -1
+    best_report = None
 
-        if not daily_raw or not h4_raw or not m5_raw:
-            return None, "تعذر جلب بيانات الشموع من المنصة حالياً."
+    for symbol in CANDIDATE_SYMBOLS:
+        try:
+            h1_raw = await fetch_ohlcv(symbol, '1h', 50)
+            m5_raw = await fetch_ohlcv(symbol, '5m', 50)
 
-        df_daily = pd.DataFrame(daily_raw, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df_h4 = pd.DataFrame(h4_raw, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df_m5 = pd.DataFrame(m5_raw, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            if not h1_raw or not m5_raw:
+                continue
 
-        d_close, d_open = df_daily['close'].iloc[-1], df_daily['open'].iloc[-1]
-        h_close, h_open = df_h4['close'].iloc[-1], df_h4['open'].iloc[-1]
-        
-        d_trend = "صاعد 🟢" if d_close > d_open else "هابط 🔴"
-        h_trend = "صاعد 🟢" if h_close > h_open else "هابط 🔴"
+            df_h1 = pd.DataFrame(h1_raw, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df_m5 = pd.DataFrame(m5_raw, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 
-        if d_trend != h_trend:
-            reason = (
-                f"⚠️ **التحليل الفني للعملة {symbol.split('/')[0]}:**\n"
-                f"• الاتجاه اليومي: {d_trend}\n"
-                f"• الاتجاه الأكبر (4 ساعات): {h_trend}\n"
-                f"❌ **السبب لعدم إرسال توصية:** يوجد تناقض بين الفريمات الكبرى (تذبذب سعري).\n"
-                f"🔍 *أبقى مراقباً لحركة السوق بدقة، وحال توفر فرصة ممتازة سيتم إرسالها فوراً.*"
-            )
-            return None, reason
+            h1_close, h1_open = df_h1['close'].iloc[-1], df_h1['open'].iloc[-1]
+            m5_close = df_m5['close'].iloc[-1]
+            
+            is_h1_long = h1_close > h1_open
+            
+            if is_h1_long:
+                h1_strength = (h1_close - h1_open) / h1_open
+                
+                if h1_strength > best_score:
+                    best_score = h1_strength
+                    best_symbol = symbol
+                    
+                    clean_symbol = symbol.split('/')[0]
+                    buy_tp1 = m5_close * 1.015
+                    buy_tp2 = m5_close * 1.030
+                    buy_sl = m5_close * 0.990
 
-        m5_close = df_m5['close'].iloc[-1]
-        m5_vol = df_m5['volume'].iloc[-1]
-        avg_vol = df_m5['volume'].iloc[-20:].mean()
+                    best_report = (
+                        f"🚀 **فرصة صفقة شراء (LONG) مختارة بعناية!**\n"
+                        f"📊 **العملة الأفضل:** {clean_symbol}\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"⏱️ **الإطار الزمني للفتح:** فريم الساعة (1H) + فريم التنفيذ (5M)\n"
+                        f"📈 **حالة شمعة الساعة:** صاعدة وقوية 🟢\n"
+                        f"⚡ **سعر الدخول الحالي:** `{m5_close}`\n\n"
+                        f"🎯 **مستويات الأهداف (Take Profit):**\n"
+                        f"• الهدف الأول (TP1): `{buy_tp1:.4f}`\n"
+                        f"• الهدف الثاني (TP2): `{buy_tp2:.4f}`\n\n"
+                        f"🛑 **وقف الخسارة (Stop Loss):**\n"
+                        f"• اغلق الصفقة فوراً إذا وصل السعر إلى: `{buy_sl:.4f}`\n\n"
+                        f"⚖️ **الرافعة المالية المقترحة:** `10x - 20x`\n"
+                        f"🕒 **التوقيت:** `{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC`"
+                    )
+        except Exception as e:
+            logging.error(f"Error evaluating symbol {symbol}: {e}")
+            continue
 
-        if m5_vol < (avg_vol * 0.7):
-            reason = (
-                f"⚠️ **التحليل الفني للعملة {symbol.split('/')[0]}:**\n"
-                f"• الاتجاه متوافق ({d_trend})\n"
-                f"❌ **السبب لعدم إرسال توصية:** حجم التداول الحالي ضعيف والسيولة منخفضة على فريم 5 دقائق.\n"
-                f"🔍 *أبقى مراقباً لحركة السوق بدقة، وحال توفر فرصة ممتازة سيتم إرسالها فوراً.*"
-            )
-            return None, reason
-
-        signal_type = "LONG (شراء) 🟢" if "صاعد" in d_trend else "SHORT (بيع) 🔴"
-        entry_price = m5_close
-        
-        if "LONG" in signal_type:
-            tp = entry_price * 1.015
-            sl = entry_price * 0.992
-        else:
-            tp = entry_price * 0.985
-            sl = entry_price * 1.008
-
-        clean_symbol = symbol.split('/')[0]
-
-        report = (
-            f"📊 **فرصة سكالبينج مؤكدة ({clean_symbol})**\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"📈 **الاتجاه اليومي (Daily):** {d_trend}\n"
-            f"⏰ **الاتجاه الأكبر (4 ساعات):** {h_trend}\n"
-            f"⚡ **إشارة الدخول (5 دقائق):** {signal_type}\n"
-            f"🎯 **سعر الدخول المقترح:** `{entry_price}`\n"
-            f"🎯 **هدف الربح (TP):** `{tp:.4f}`\n"
-            f"🛑 **وقف الخسارة (SL):** `{sl:.4f}`\n"
-            f"⚖️ **الرافعة المالية:** `10x - 20x`\n"
-            f"🕒 **التوقيت:** `{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC`"
-        )
-        return report, "success"
-    except Exception as e:
-        logging.error(f"Error in analysis for {symbol}: {e}")
-        return None, "حدث خطأ تقني أثناء تحليل السوق."
+    if best_symbol:
+        return True, best_report
+    else:
+        return False, "لا توجد فرص شراء (LONG) مطابقة للشروط على العملات المتاحة حالياً."
 
 async def check_subscriptions_background(application):
     while True:
@@ -315,6 +278,8 @@ async def check_subscriptions_background(application):
             await asyncio.sleep(60)
 
 async def send_scheduled_signals(application):
+    last_sent_status = False
+    
     while True:
         try:
             now = datetime.utcnow()
@@ -335,103 +300,108 @@ async def send_scheduled_signals(application):
                     if uid not in active_users:
                         active_users.append(uid)
 
-            for symbol in SYMBOLS:
-                analysis, msg = await analyze_market(symbol)
+            back_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("الرجوع للقائمة", callback_data='main_menu')]])
+
+            has_opportunity, report = await find_best_opportunity()
+            
+            if has_opportunity and not last_sent_status:
                 for uid in active_users:
                     try:
-                        if analysis:
-                            await application.bot.send_message(
-                                chat_id=uid,
-                                text=f"⏱️ **توصية دورية آلية متزامنة مع إغلاق الشمعة:**\n\n{analysis}",
-                                parse_mode="Markdown"
-                            )
-                        else:
-                            if uid == ADMIN_ID:
-                                await application.bot.send_message(
-                                    chat_id=uid,
-                                    text=f"🤖 **تقرير نظام المراقبة الآلية ({symbol.split('/')[0]}):**\n\n{msg}",
-                                    parse_mode="Markdown"
-                                )
+                        await application.bot.send_message(
+                            chat_id=uid,
+                            text=report,
+                            parse_mode="Markdown",
+                            reply_markup=back_keyboard
+                        )
                     except Exception as e:
-                        logging.error(f"Error sending to user {uid}: {e}")
-                await asyncio.sleep(1)
+                        logging.error(f"Error sending analysis to user {uid}: {e}")
+                last_sent_status = True
+            elif not has_opportunity:
+                last_sent_status = False
+
+            await asyncio.sleep(1)
         except Exception as e:
             logging.error(f"Error in signal background loop: {e}")
             await asyncio.sleep(10)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if not is_user_active(user_id) and user_id != ADMIN_ID:
+def get_main_menu_keyboard(user_id):
+    if is_user_active(user_id) or user_id == ADMIN_ID:
+        keyboard = [
+            [InlineKeyboardButton("📊 فحص السوق وإرسال أفضل صفقة الآن", callback_data='get_signal')],
+            [InlineKeyboardButton("💳 تجديد أو تمديد الاشتراك", callback_data='choose_plan')],
+            [InlineKeyboardButton("🆔 حالة الاشتراك والـ ID", callback_data='check_status')],
+            [InlineKeyboardButton("📞 الدعم والإدارة", callback_data='support')]
+        ]
+    else:
         keyboard = [
             [InlineKeyboardButton("💳 اختيار باقة الاشتراك والإيداع الآلي", callback_data='choose_plan')],
             [InlineKeyboardButton("🆔 حالة الاشتراك والـ ID", callback_data='check_status')],
             [InlineKeyboardButton("📞 التواصل مع الدعم", callback_data='support')]
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
-            f"❌ **عذراً، اشتراكك منتهي أو غير فعال.**\n"
-            f"🆔 **الـ ID الخاص بك:** `{user_id}`\n\n"
-            f"اختر الباقة المناسبة وقم بالتحويل عبر شبكة BNB وأرسل رقم المعاملة (TxID) للتفعيل الآلي الفوري.",
-            reply_markup=reply_markup,
-            parse_mode="Markdown"
-        )
-        return
+    return InlineKeyboardMarkup(keyboard)
 
-    keyboard = [
-        [InlineKeyboardButton("📊 إرسال توصية فورية الآن", callback_data='get_signal')],
-        [InlineKeyboardButton("💳 تجديد أو تمديد الاشتراك", callback_data='choose_plan')],
-        [InlineKeyboardButton("🆔 حالة الاشتراك والـ ID", callback_data='check_status')],
-        [InlineKeyboardButton("📞 الدعم والإدارة", callback_data='support')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     
     welcome_text = (
-        f"🤖 **مرحباً بك في بوت توصيات العقود الآجلة الاحترافي**\n"
-        f"🆔 **الـ ID السري الخاص بك:** `{user_id}`\n\n"
-        f"حالة الاشتراك: مفعل ونشط ✅\n"
-        f"البوت يحلل السوق بدقة متزامنة ولا يرسل إلا الصفقات المضمونة."
+        f"🤖 أنا بوت لأصحاب رأس المال البسيط. أحلل السوق وأختار لك العملة الأفضل وأرسل صفقة الشراء (LONG) بدقة. "
+        f"التزم معي بقواعد التوصية لكي أحافظ على رأس مالك ونقوم بخطة تكبير رأس مالك وجني الأرباح.\n\n"
+        f"🆔 **الـ ID الخاص بك:** `{user_id}`\n"
+        f"حالة الاشتراك: {'مفعل ونشط ✅' if is_user_active(user_id) or user_id == ADMIN_ID else 'منتهي أو غير فعال ❌'}"
     )
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
+    
+    await update.message.reply_text(welcome_text, reply_markup=get_main_menu_keyboard(user_id), parse_mode="Markdown")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
 
+    if query.data == 'main_menu':
+        menu_text = (
+            f"🤖 أنا بوت لأصحاب رأس المال البسيط. أحلل السوق وأختار لك العملة الأفضل وأرسل صفقة الشراء (LONG) بدقة. "
+            f"التزم معي بقواعد التوصية لكي أحافظ على رأس مالك ونقوم بخطة تكبير رأس مالك وجني الأرباح.\n\n"
+            f"🆔 **الـ ID الخاص بك:** `{user_id}`\n"
+            f"اختر من القائمة أدناه:"
+        )
+        try:
+            await query.message.edit_text(menu_text, reply_markup=get_main_menu_keyboard(user_id), parse_mode="Markdown")
+        except Exception:
+            await query.message.reply_text(menu_text, reply_markup=get_main_menu_keyboard(user_id), parse_mode="Markdown")
+        return
+
     if not is_user_active(user_id) and query.data not in ['choose_plan', 'buy_week', 'buy_month', 'check_status', 'support'] and user_id != ADMIN_ID:
         await query.message.reply_text("❌ عذراً، اشتراكك منتهي. يرجى تجديد الاشتراك للوصول إلى الخدمات.")
         return
 
+    back_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("الرجوع للقائمة", callback_data='main_menu')]])
+
     if query.data == 'get_signal':
-        await query.message.reply_text("⏳ جاري فحص الشموع وتحليل السوق بدقة لحظية...")
-        for symbol in SYMBOLS:
-            analysis, msg = await analyze_market(symbol)
-            if analysis:
-                await query.message.reply_text(analysis, parse_mode="Markdown")
-            else:
-                await query.message.reply_text(msg, parse_mode="Markdown")
-            await asyncio.sleep(1)
+        await query.message.reply_text("⏳ جاري فحص جميع العملات واختيار أقوى فرصة شراء (LONG) على فريم الساعة...")
+        has_opp, report = await find_best_opportunity()
+        await query.message.reply_text(report, parse_mode="Markdown", reply_markup=back_keyboard)
 
     elif query.data == 'choose_plan':
         keyboard = [
             [InlineKeyboardButton("📦 باقة أسبوع (15 USDT)", callback_data='buy_week')],
-            [InlineKeyboardButton("📦 باقة شهر (50 USDT)", callback_data='buy_month')]
+            [InlineKeyboardButton("📦 باقة شهر (50 USDT)", callback_data='buy_month')],
+            [InlineKeyboardButton("الرجوع للقائمة", callback_data='main_menu')]
         ]
-        await query.message.reply_text(
+        text_plan = (
             "💳 **اختر باقة الاشتراك المناسبة لك:**\n"
             "• باقة الأسبوع: 15 دولار\n"
             "• باقة الشهر: 50 دولار\n\n"
-            "بعد اختيار الباقة سيظهر لك العنوان والباركود لإتمام التحويل الآلي.",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
+            "بعد اختيار الباقة سيظهر لك العنوان والباركود لإتمام التحويل الآلي."
         )
+        try:
+            await query.message.edit_text(text_plan, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        except Exception:
+            await query.message.reply_text(text_plan, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif query.data in ['buy_week', 'buy_month']:
         plan_key = "week" if query.data == 'buy_week' else "month"
         plan = PLANS[plan_key]
         
-        # حفظ الباقة المختارة مؤقتاً في سياق المستخدم
         context.user_data['pending_plan'] = plan_key
         
         deposit_caption = (
@@ -441,16 +411,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📍 **عنوان المحفظة:**\n`{DEPOSIT_ADDRESS_BEP20}`\n"
             f"💰 **المطلوب تحويله:** `{plan['price']} USDT`\n\n"
             f"📷 **امسح الباركود أعلاه للإيداع السريع عبر شبكة BNB.**\n"
-            f"👇 **بعد إتمام التحويل الناجح، قم بإرسال رقم المعاملة (TxID Hash) مباشرة هنا في المحادثة للتحفعيل الآلي الفوري.**"
+            f"👇 **بعد إتمام التحويل الناجح، قم بإرسال رقم المعاملة (TxID Hash) مباشرة هنا في المحادثة للتفعيل الآلي الفوري.**"
         )
         try:
             await query.message.reply_photo(
                 photo=QR_CODE_URL,
                 caption=deposit_caption,
-                parse_mode="Markdown"
+                parse_mode="Markdown",
+                reply_markup=back_keyboard
             )
         except Exception:
-            await query.message.reply_text(deposit_caption, parse_mode="Markdown")
+            await query.message.reply_text(deposit_caption, parse_mode="Markdown", reply_markup=back_keyboard)
 
     elif query.data == 'check_status':
         if user_id == ADMIN_ID:
@@ -462,18 +433,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 status_text = f"🆔 **معلومات حسابك:**\n• الـ ID (سري): `{user_id}`\n• حالة الاشتراك: مفعل ✅\n• تاريخ الانتهاء: `{expiry_str} UTC`"
             else:
                 status_text = f"🆔 **معلومات حسابك:**\n• الـ ID (سري): `{user_id}`\n• حالة الاشتراك: منتهي أو غير مفعل ❌"
-        await query.message.reply_text(status_text, parse_mode="Markdown")
+        try:
+            await query.message.edit_text(status_text, parse_mode="Markdown", reply_markup=back_keyboard)
+        except Exception:
+            await query.message.reply_text(status_text, parse_mode="Markdown", reply_markup=back_keyboard)
 
     elif query.data == 'support':
-        await query.message.reply_text("📞 للتواصل المباشر مع الدعم الفني: @AdminUsername")
+        text_sup = "📞 للتواصل المباشر مع الدعم الفني: @AdminUsername"
+        try:
+            await query.message.edit_text(text_sup, reply_markup=back_keyboard)
+        except Exception:
+            await query.message.reply_text(text_sup, reply_markup=back_keyboard)
 
 async def handle_tx_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    # التحقق مما إذا كان النص المدخل هو رقم معاملة (TxID) يبدأ بـ 0x
     if text.startswith("0x") and len(text) == 66:
-        pending_plan_key = context.user_data.get('pending_plan', 'month') # الافتراضي شهر إذا لم يحدد
+        pending_plan_key = context.user_data.get('pending_plan', 'month')
         plan = PLANS[pending_plan_key]
         
         await update.message.reply_text("🔍 جاري التحقق من شبكة البلوكشين وتأكيد وصول المعاملة...")
@@ -484,7 +461,6 @@ async def handle_tx_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             db_save_tx(text, user_id, plan['price'])
             expiry_str = db_add_subscriber(user_id, plan['days'])
             
-            # تفريغ الباقة المعلقة
             context.user_data.pop('pending_plan', None)
             
             success_msg = (
@@ -492,14 +468,15 @@ async def handle_tx_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📦 الباقة: `{plan['name']}`\n"
                 f"💰 المبلغ المؤكد: `{plan['price']} USDT`\n"
                 f"⏳ تاريخ انتهاء الاشتراك: `{expiry_str} UTC`\n\n"
-                f"🚀 **ابقى مترقب إشعارات وتوصيات البوت اللحظية الآلية!**"
+                f"🚀 **ابقى مترقب إشعارات وتقارير البوت اللحظية الآلية!**"
             )
-            await update.message.reply_text(success_msg, parse_mode="Markdown")
+            back_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("الرجوع للقائمة", callback_data='main_menu')]])
+            await update.message.reply_text(success_msg, parse_mode="Markdown", reply_markup=back_keyboard)
         else:
             await update.message.reply_text(result, parse_mode="Markdown")
     else:
         if not is_user_active(user_id) and user_id != ADMIN_ID:
-            await update.message.reply_text("❌ يرجى اختيار باقة الاشتراك وإرسال رقم المعاملة (TxID) الصحيح الذي تبدأ بـ 0x لتفعيل الحساب تلقائياً.")
+            await update.message.reply_text("❌ يرجى اختيار باقة الاشتراك وإرسال رقم المعاملة (TxID) الصحيح الذي يبدأ بـ 0x لتفعيل الحساب تلقائياً.")
 
 def main():
     application = ApplicationBuilder().token(TOKEN).build()
@@ -514,7 +491,7 @@ def main():
 
     application.post_init = post_init
     
-    print("Bot is fully running with automated blockchain verification architecture...")
+    print("Bot is fully running with best-opportunity selection and hourly long configuration...")
     application.run_polling()
 
 if __name__ == '__main__':
