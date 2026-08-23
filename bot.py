@@ -36,14 +36,15 @@ CHECK_INTERVAL = 300  # 5 دقائق بالثواني
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-# تهيئة منصة Binance Futures عبر CCXT
 exchange = ccxt.binance({
+    'enableRateLimit': True,
     'options': {
         'defaultType': 'future'
     }
 })
 
-SYMBOLS = ['DOGE/USDT:USDT', 'XRP/USDT:USDT', 'SOL/USDT:USDT']
+
+SYMBOLS = 'DOGE/USDT:USDT', 'XRP/USDT:USDT', 'SOL/USDT:USDT']
 
 async def fetch_ohlcv(symbol, timeframe, limit=100):
     try:
