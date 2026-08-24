@@ -180,8 +180,6 @@ exchange = ccxt.mexc({
     }
 })
 
-CANDIDATE_SYMBOLS = ['DOGE/USDT:USDT', 'XRP/USDT:USDT', 'SOL/USDT:USDT']
-
 ACTIVE_TRADE = {
     "symbol": None,
     "entry": 0.0,
@@ -199,82 +197,123 @@ async def fetch_ohlcv(symbol, timeframe, limit=100):
         logging.error(f"Error fetching {symbol} {timeframe}: {e}")
         return None
 
-async def find_best_opportunity():
+async def get_dynamic_low_price_symbols():
+    try:
+        await exchange.load_markets()
+        symbols = []
+        tickers = await exchange.fetch_tickers()
+        
+        for symbol, ticker in tickers.items():
+            if ':USDT' in symbol and 'USDT/USDT' not in symbol:
+                last_price = ticker.get('last')
+                if last_price and 0.00001 <= last_price < 10.0:
+                    symbols.append(symbol)
+                    
+        if not symbols:
+            symbols = ['DOGE/USDT:USDT', 'SHIB/USDT:USDT', 'PEPE/USDT:USDT', 'XRP/USDT:USDT', 'ADA/USDT:USDT', 'SOL/USDT:USDT']
+            
+        return symbols[:35]
+    except Exception as e:
+        logging.error(f"Error loading dynamic symbols: {e}")
+        return ['DOGE/USDT:USDT', 'SHIB/USDT:USDT', 'PEPE/USDT:USDT', 'XRP/USDT:USDT', 'ADA/USDT:USDT', 'SOL/USDT:USDT']
+
+async def find_long_and_scalp_opportunity():
     global ACTIVE_TRADE
     if ACTIVE_TRADE["status"]:
         return False, None, None
 
+    candidate_symbols = await get_dynamic_low_price_symbols()
     best_symbol = None
     best_score = -1
     best_report = None
     trade_data = None
 
-    for symbol in CANDIDATE_SYMBOLS:
+    for symbol in candidate_symbols:
         try:
-            h1_raw = await fetch_ohlcv(symbol, '1h', 50)
-            m5_raw = await fetch_ohlcv(symbol, '5m', 50)
+            m5_raw = await fetch_ohlcv(symbol, '5m', 40)
+            h1_raw = await fetch_ohlcv(symbol, '1h', 30)
 
-            if not h1_raw or not m5_raw:
+            if not m5_raw or not h1_raw or len(m5_raw) < 10:
                 continue
 
-            df_h1 = pd.DataFrame(h1_raw, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df_m5 = pd.DataFrame(m5_raw, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df_h1 = pd.DataFrame(h1_raw, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+            df_m5['ema9'] = df_m5['close'].ewm(span=9, adjust=False).mean()
+            df_m5['ema21'] = df_m5['close'].ewm(span=21, adjust=False).mean()
 
-            h1_close, h1_open = df_h1['close'].iloc[-1], df_h1['open'].iloc[-1]
-            m5_close = df_m5['close'].iloc[-1]
+            curr_close = df_m5['close'].iloc[-1]
+            curr_open = df_m5['open'].iloc[-1]
+            curr_ema9 = df_m5['ema9'].iloc[-1]
+            curr_ema21 = df_m5['ema21'].iloc[-1]
             
-            is_h1_long = h1_close > h1_open
+            h1_close = df_h1['close'].iloc[-1]
+            h1_open = df_h1['open'].iloc[-1]
             
-            if is_h1_long:
-                h1_strength = (h1_close - h1_open) / h1_open
-                
-                if h1_strength > best_score:
-                    best_score = h1_strength
+            is_h1_trend_up = h1_close > h1_open
+            is_m5_bullish = curr_close > curr_open and curr_ema9 >= curr_ema21
+
+            if is_m5_bullish:
+                momentum_score = (curr_close - curr_open) / curr_open
+                if is_h1_trend_up:
+                    momentum_score *= 1.5
+
+                if momentum_score > best_score:
+                    best_score = momentum_score
                     best_symbol = symbol
                     
                     clean_symbol = symbol.split('/')[0]
-                    buy_tp1 = m5_close * 1.015
-                    buy_tp2 = m5_close * 1.030
-                    buy_sl = m5_close * 0.990
+                    
+                    if is_h1_trend_up:
+                        trade_type = "صفقة لونغ رئيسية مدعومة بزخم 5 دقائق"
+                        tp1 = curr_close * 1.020
+                        tp2 = curr_close * 1.045
+                        sl = curr_close * 0.985
+                        leverage = "10x - 20x"
+                    else:
+                        trade_type = "صفقة سكالبينج سريعة (5M Scalp)"
+                        tp1 = curr_close * 1.009
+                        tp2 = curr_close * 1.020
+                        sl = curr_close * 0.993
+                        leverage = "15x - 25x"
 
                     trade_data = {
                         "symbol": symbol,
-                        "entry": m5_close,
-                        "tp1": buy_tp1,
-                        "tp2": buy_tp2,
-                        "sl": buy_sl,
+                        "entry": curr_close,
+                        "tp1": tp1,
+                        "tp2": tp2,
+                        "sl": sl,
                         "status": True
                     }
 
                     best_report = (
-                        f"🚀 **فرصة صفقة شراء (LONG) مختارة بعناية!**\n"
-                        f"📊 **العملة الأفضل:** {clean_symbol}\n"
+                        f"🚀📈 **{trade_type} (LONG)**\n"
+                        f"📊 **العملة:** {clean_symbol} (عملة رخيصة / ميم)\n"
                         f"━━━━━━━━━━━━━━━━━━\n"
-                        f"⏱️ **الإطار الزمني للفتح:** فريم الساعة (1H) + فريم التنفيذ (5M)\n"
-                        f"📈 **حالة شمعة الساعة:** صاعدة وقوية 🟢\n"
-                        f"⚡ **سعر الدخول الحالي:** `{m5_close}`\n\n"
+                        f"⏱️ **الإطار الزمني للتنفيذ:** فريم الـ 5 دقائق + فلتر اتجاه الساعة (1H)\n"
+                        f"📈 **الحالة الفنية:** تقاطع إيجابي وزخم صاعد قوي 🟢\n"
+                        f"⚡ **سعر الدخول الحالي:** `{curr_close}`\n\n"
                         f"🎯 **مستويات الأهداف (Take Profit):**\n"
-                        f"• الهدف الأول (TP1): `{buy_tp1:.4f}`\n"
-                        f"• الهدف الثاني (TP2): `{buy_tp2:.4f}`\n\n"
+                        f"• الهدف الأول (TP1): `{tp1:.5f}`\n"
+                        f"• الهدف الثاني (TP2): `{tp2:.5f}`\n\n"
                         f"🛑 **وقف الخسارة (Stop Loss):**\n"
-                        f"• اغلق الصفقة فوراً إذا وصل السعر إلى: `{buy_sl:.4f}`\n\n"
-                        f"⚖️ **الرافعة المالية المقترحة:** `10x - 20x`\n"
+                        f"• خروج آمن إذا وصل السعر إلى: `{sl:.5f}`\n\n"
+                        f"⚖️ **الرافعة المالية المقترحة:** `{leverage}`\n"
                         f"🕒 **التوقيت:** `{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC`"
                     )
         except Exception as e:
-            logging.error(f"Error evaluating symbol {symbol}: {e}")
             continue
 
     if best_symbol and trade_data:
         ACTIVE_TRADE = trade_data
         return True, best_report, trade_data
     else:
-        return False, "لا توجد فرص شراء (LONG) مطابقة للشروط على العملات المتاحة حالياً.", None
+        return False, "لا توجد فرص لونغ أو سكالب مطابقة للشروط حالياً.", None
 
 async def monitor_active_trade(application):
     global ACTIVE_TRADE
     while True:
-        await asyncio.sleep(15)
+        await asyncio.sleep(10)
         if not ACTIVE_TRADE["status"]:
             continue
 
@@ -306,37 +345,34 @@ async def monitor_active_trade(application):
                 report = (
                     f"🎯🎉 **تم تحقيق الهدف الثاني بنجاح تام! (TP2)**\n"
                     f"📊 **العملة:** {clean_symbol}\n"
-                    f"⚡ **سعر الخروج/الوصول:** `{current_price}`\n"
-                    f"💰 مبروك لكل من اغتنم الصفقة وحقق أرباح ممتازة.\n"
+                    f"⚡ **سعر الخروج اللحظي:** `{current_price}`\n"
+                    f"💰 مبروك الأرباح الممتازة.\n"
                     f"🕒 `{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC`"
                 )
                 for uid in active_users:
                     try:
                         await application.bot.send_message(chat_id=uid, text=report, parse_mode="Markdown", reply_markup=back_keyboard)
                     except Exception as e:
-                        logging.error(f"Error sending TP2 report to {uid}: {e}")
+                        logging.error(f"Error sending TP2 report: {e}")
                 ACTIVE_TRADE["status"] = False
-
-            elif current_price >= tp1 and current_price < tp2:
-                pass
 
             elif current_price <= sl:
                 report = (
                     f"🛑🚨 **تنبيه ضرب وقف الخسارة (Stop Loss)!**\n"
                     f"📊 **العملة:** {clean_symbol}\n"
-                    f"⚡ **سعر الوصول:** `{current_price}`\n"
-                    f"⚠️ تم ضرب الستوب لوز، يرجى الالتزام بإدارة رأس المال دائماً.\n"
+                    f"⚡ **سعر الخروج:** `{current_price}`\n"
+                    f"⚠️ تم ضرب الستوب، حماية رأس المال أولوية.\n"
                     f"🕒 `{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC`"
                 )
                 for uid in active_users:
                     try:
                         await application.bot.send_message(chat_id=uid, text=report, parse_mode="Markdown", reply_markup=back_keyboard)
                     except Exception as e:
-                        logging.error(f"Error sending SL report to {uid}: {e}")
+                        logging.error(f"Error sending SL report: {e}")
                 ACTIVE_TRADE["status"] = False
 
         except Exception as e:
-            logging.error(f"Error monitoring active trade {symbol}: {e}")
+            logging.error(f"Error monitoring trade: {e}")
 
 async def check_subscriptions_background(application):
     while True:
@@ -361,11 +397,10 @@ async def check_subscriptions_background(application):
                         )
                         db_update_notification(user_id)
                     except Exception as e:
-                        logging.error(f"Failed to send 24h warning to {user_id}: {e}")
+                        logging.error(f"Failed to send 24h warning: {e}")
 
             await asyncio.sleep(3600)
         except Exception as e:
-            logging.error(f"Error in sub-check background loop: {e}")
             await asyncio.sleep(60)
 
 async def send_scheduled_signals(application):
@@ -394,7 +429,7 @@ async def send_scheduled_signals(application):
 
             back_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("الرجوع للقائمة", callback_data='main_menu')]])
 
-            has_opportunity, report, _ = await find_best_opportunity()
+            has_opportunity, report, _ = await find_long_and_scalp_opportunity()
             
             if has_opportunity and report:
                 for uid in active_users:
@@ -406,17 +441,16 @@ async def send_scheduled_signals(application):
                             reply_markup=back_keyboard
                         )
                     except Exception as e:
-                        logging.error(f"Error sending analysis to user {uid}: {e}")
+                        logging.error(f"Error sending scheduled signal: {e}")
 
             await asyncio.sleep(1)
         except Exception as e:
-            logging.error(f"Error in signal background loop: {e}")
             await asyncio.sleep(10)
 
 def get_main_menu_keyboard(user_id):
     if is_user_active(user_id) or user_id == ADMIN_ID:
         keyboard = [
-            [InlineKeyboardButton("📊 فحص السوق وإرسال أفضل صفقة الآن", callback_data='get_signal')],
+            [InlineKeyboardButton("🚀 فحص وسحب صفقة لونغ أو سكالب الآن", callback_data='get_signal')],
             [InlineKeyboardButton("💳 تجديد أو تمديد الاشتراك", callback_data='choose_plan')],
             [InlineKeyboardButton("🆔 حالة الاشتراك والـ ID", callback_data='check_status')],
             [InlineKeyboardButton("📞 الدعم والإدارة", callback_data='support')]
@@ -431,14 +465,11 @@ def get_main_menu_keyboard(user_id):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     welcome_text = (
-        f"🤖 أنا بوت لأصحاب رأس المال البسيط. أحلل السوق وأختار لك العملة الأفضل وأرسل صفقة الشراء (LONG) بدقة. "
-        f"التزم معي بقواعد التوصية لكي أحافظ على رأس مالك ونقوم بخطة تكبير رأس مالك وجني الأرباح.\n\n"
+        f"🤖 أنا بوت متخصص في صفقات **اللونغ (LONG)** والسكالبينج السريع لعملات الميم والعملات الرخيصة.\n\n"
         f"🆔 **الـ ID الخاص بك:** `{user_id}`\n"
         f"حالة الاشتراك: {'مفعل ونشط ✅' if is_user_active(user_id) or user_id == ADMIN_ID else 'منتهي أو غير فعال ❌'}"
     )
-    
     await update.message.reply_text(welcome_text, reply_markup=get_main_menu_keyboard(user_id), parse_mode="Markdown")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -448,8 +479,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == 'main_menu':
         menu_text = (
-            f"🤖 أنا بوت لأصحاب رأس المال البسيط. أحلل السوق وأختار لك العملة الأفضل وأرسل صفقة الشراء (LONG) بدقة. "
-            f"التزم معي بقواعد التوصية لكي أحافظ على رأس مالك ونقوم بخطة تكبير رأس مالك وجني الأرباح.\n\n"
+            f"🤖 أنا بوت متخصص في صفقات **اللونغ (LONG)** والسكالبينج السريع لعملات الميم والعملات الرخيصة.\n\n"
             f"🆔 **الـ ID الخاص بك:** `{user_id}`\n"
             f"اختر من القائمة أدناه:"
         )
@@ -466,12 +496,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     back_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("الرجوع للقائمة", callback_data='main_menu')]])
 
     if query.data == 'get_signal':
-        await query.message.reply_text("⏳ جاري فحص جميع العملات واختيار أقوى فرصة شراء (LONG) على فريم الساعة...")
-        has_opp, report, _ = await find_best_opportunity()
+        await query.message.reply_text("⏳ جاري فحص السوق والبحث عن أقوى فرصة لونغ أو سكالب...")
+        has_opp, report, _ = await find_long_and_scalp_opportunity()
         if has_opp and report:
             await query.message.reply_text(report, parse_mode="Markdown", reply_markup=back_keyboard)
         else:
-            await query.message.reply_text("❌ توجد صفقة نشطة حالياً يتم متابعتها، أو لا توجد فرص مطابقة للشروط حالياً.", reply_markup=back_keyboard)
+            await query.message.reply_text("❌ توجد صفقة نشطة حالياً، أو لم تكتمل شروط الصفقات حالياً.", reply_markup=back_keyboard)
 
     elif query.data == 'choose_plan':
         keyboard = [
@@ -493,7 +523,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data in ['buy_week', 'buy_month']:
         plan_key = "week" if query.data == 'buy_week' else "month"
         plan = PLANS[plan_key]
-        
         context.user_data['pending_plan'] = plan_key
         
         deposit_caption = (
@@ -503,15 +532,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📍 **عنوان المحفظة:**\n`{DEPOSIT_ADDRESS_BEP20}`\n"
             f"💰 **المطلوب تحويله:** `{plan['price']} USDT`\n\n"
             f"📷 **امسح الباركود أعلاه للإيداع السريع عبر شبكة BNB.**\n"
-            f"👇 **بعد إتمام التحويل الناجح، قم بإرسال رقم المعاملة (TxID Hash) مباشرة هنا في المحادثة للتفعيل الآلي الفوري.**"
+            f"👇 **بعد إتمام التحويل الناجح، قم بإرسال رقم المعاملة (TxID Hash) مباشرة هنا للتفعيل الفوري.**"
         )
         try:
-            await query.message.reply_photo(
-                photo=QR_CODE_URL,
-                caption=deposit_caption,
-                parse_mode="Markdown",
-                reply_markup=back_keyboard
-            )
+            await query.message.reply_photo(photo=QR_CODE_URL, caption=deposit_caption, parse_mode="Markdown", reply_markup=back_keyboard)
         except Exception:
             await query.message.reply_text(deposit_caption, parse_mode="Markdown", reply_markup=back_keyboard)
 
@@ -552,7 +576,6 @@ async def handle_tx_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_valid:
             db_save_tx(text, user_id, plan['price'])
             expiry_str = db_add_subscriber(user_id, plan['days'])
-            
             context.user_data.pop('pending_plan', None)
             
             success_msg = (
@@ -560,9 +583,9 @@ async def handle_tx_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📦 الباقة: `{plan['name']}`\n"
                 f"💰 المبلغ المؤكد: `{plan['price']} USDT`\n"
                 f"⏳ تاريخ انتهاء الاشتراك: `{expiry_str} UTC`\n\n"
-                f"🚀 **ابقى مترقب إشعارات وتقارير البوت اللحظية الآلية!**"
+                f"🚀 **ابقى مترقب تقارير صفقات اللونغ والسكالب اللحظية!**"
             )
-            back_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("الرجوع للقائمة", callback_data='main_menu')]] )
+            back_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("الرجوع للقائمة", callback_data='main_menu')]])
             await update.message.reply_text(success_msg, parse_mode="Markdown", reply_markup=back_keyboard)
         else:
             await update.message.reply_text(result, parse_mode="Markdown")
@@ -584,8 +607,8 @@ def main():
 
     application.post_init = post_init
     
-    print("Bot is fully running with trade tracking for TP and SL...")
+    print("Bot is fully running with Long & Scalp engine...")
     application.run_polling()
 
-if __name__ == '__main__':
+if __name__ == 'main__':
     main()
