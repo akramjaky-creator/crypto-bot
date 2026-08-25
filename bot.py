@@ -46,7 +46,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS subscribers (
             user_id INTEGER PRIMARY KEY,
             expiry_date TEXT,
-            notified_24h INTEGER DEFAULT 0
+            notified_24h INTEGER DEFAULT 0,
+            has_used_trial INTEGER DEFAULT 0
         )
     """)
     cursor.execute("""
@@ -62,15 +63,57 @@ def init_db():
 
 init_db()
 
+def db_check_or_grant_trial(user_id: int):
+    conn = sqlite3.connect("bot_subscribers.db")
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT expiry_date, has_used_trial FROM subscribers WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    
+    now = datetime.utcnow()
+    
+    if row:
+        expiry_str, has_used_trial = row
+        expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d %H:%M:%S")
+        
+        if expiry_date > now:
+            conn.close()
+            return "ACTIVE"
+        
+        if has_used_trial == 1:
+            conn.close()
+            return "EXPIRED"
+        else:
+            new_expiry = now + timedelta(days=3)
+            expiry_str = new_expiry.strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute("""
+                UPDATE subscribers SET expiry_date = ?, has_used_trial = 1, notified_24h = 0 WHERE user_id = ?
+            """, (expiry_str, user_id))
+            conn.commit()
+            conn.close()
+            return "GRANTED"
+    else:
+        new_expiry = now + timedelta(days=3)
+        expiry_str = new_expiry.strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+            INSERT INTO subscribers (user_id, expiry_date, notified_24h, has_used_trial)
+            VALUES (?, ?, 0, 1)
+        """, (user_id, expiry_str))
+        conn.commit()
+        conn.close()
+        return "GRANTED"
+
 def db_add_subscriber(user_id: int, days: int):
     conn = sqlite3.connect("bot_subscribers.db")
     cursor = conn.cursor()
     
-    cursor.execute("SELECT expiry_date FROM subscribers WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT expiry_date, has_used_trial FROM subscribers WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     
     now = datetime.utcnow()
+    has_used_trial = 1
     if row:
+        _, has_used_trial = row
         current_expiry = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
         if current_expiry > now:
             expiry = current_expiry + timedelta(days=days)
@@ -82,9 +125,9 @@ def db_add_subscriber(user_id: int, days: int):
     expiry_str = expiry.strftime("%Y-%m-%d %H:%M:%S")
     
     cursor.execute("""
-        INSERT OR REPLACE INTO subscribers (user_id, expiry_date, notified_24h)
-        VALUES (?, ?, 0)
-    """, (user_id, expiry_str))
+        INSERT OR REPLACE INTO subscribers (user_id, expiry_date, notified_24h, has_used_trial)
+        VALUES (?, ?, 0, ?)
+    """, (user_id, expiry_str, has_used_trial))
     conn.commit()
     conn.close()
     return expiry_str
@@ -92,7 +135,7 @@ def db_add_subscriber(user_id: int, days: int):
 def db_get_subscriber(user_id: int):
     conn = sqlite3.connect("bot_subscribers.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT expiry_date, notified_24h FROM subscribers WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT expiry_date, notified_24h, has_used_trial FROM subscribers WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     conn.close()
     return row
@@ -128,7 +171,7 @@ def is_user_active(user_id: int) -> bool:
     row = db_get_subscriber(user_id)
     if not row:
         return False
-    expiry_str, _ = row
+    expiry_str, _, _ = row
     expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d %H:%M:%S")
     return datetime.utcnow() < expiry_date
 
@@ -465,11 +508,31 @@ def get_main_menu_keyboard(user_id):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    welcome_text = (
-        f"🤖 أنا بوت متخصص في صفقات **اللونغ (LONG)** والسكالبينج السريع لعملات الميم والعملات الرخيصة.\n\n"
-        f"🆔 **الـ ID الخاص بك:** `{user_id}`\n"
-        f"حالة الاشتراك: {'مفعل ونشط ✅' if is_user_active(user_id) or user_id == ADMIN_ID else 'منتهي أو غير فعال ❌'}"
-    )
+    
+    trial_status = db_check_or_grant_trial(user_id)
+    
+    if trial_status == "GRANTED":
+        welcome_text = (
+            f"🎁 **مرحباً بك! تم منحك فترة تجريبية مجانية لمدة 3 أيام تلقائياً.**\n\n"
+            f"🤖 أنا بوت متخصص في صفقات **اللونغ (LONG)** والسكالبينج السريع لعملات الميم والعملات الرخيصة.\n"
+            f"🆔 **الـ ID الخاص بك:** `{user_id}`\n"
+            f"حالة الاشتراك: **تجريبي مفعل لمدة 3 أيام ✅**"
+        )
+    elif trial_status == "EXPIRED":
+        welcome_text = (
+            f"⚠️ **عذراً، لقد انتهت الفترة المجانية (3 أيام) المخصصة لهذا الحساب مسبقاً.**\n"
+            f"لا يمكنك تفعيل فترة تجريبية جديدة، ويدير البوت الآن نظام الاشتراك المدفوع.\n\n"
+            f"🤖 أنا بوت متخصص في صفقات **اللونغ (LONG)** والسكالبينج السريع.\n"
+            f"🆔 **الـ ID الخاص بك:** `{user_id}`\n"
+            f"حالة الاشتراك: **منتهي ❌ (يرجى التجديد)**"
+        )
+    else:
+        welcome_text = (
+            f"🤖 أنا بوت متخصص في صفقات **اللونغ (LONG)** والسكالبينج السريع لعملات الميم والعملات الرخيصة.\n\n"
+            f"🆔 **الـ ID الخاص بك:** `{user_id}`\n"
+            f"حالة الاشتراك: **مفعل ونشط ✅**"
+        )
+
     await update.message.reply_text(welcome_text, reply_markup=get_main_menu_keyboard(user_id), parse_mode="Markdown")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -490,7 +553,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not is_user_active(user_id) and query.data not in ['choose_plan', 'buy_week', 'buy_month', 'check_status', 'support'] and user_id != ADMIN_ID:
-        await query.message.reply_text("❌ عذراً، اشتراكك منتهي. يرجى تجديد الاشتراك للوصول إلى الخدمات.")
+        await query.message.reply_text("❌ عذراً، انتهت فترتك المجانية أو اشتراكك. يرجى اختيار باقة الاشتراك للاستمرار.")
         return
 
     back_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("الرجوع للقائمة", callback_data='main_menu')]])
@@ -545,14 +608,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             row = db_get_subscriber(user_id)
             if row and is_user_active(user_id):
-                expiry_str, _ = row
-                status_text = f"🆔 **معلومات حسابك:**\n• الـ ID (سري): `{user_id}`\n• حالة الاشتراك: مفعل ✅\n• تاريخ الانتهاء: `{expiry_str} UTC`"
+                expiry_str, _, has_used_trial = row
+                status_text = f"🆔 **معلومات حسابك:**\n• الـ ID (سري): `{user_id}`\n• حالة الاشتراك: مفعل (نشط) ✅\n• تاريخ الانتهاء: `{expiry_str} UTC`"
             else:
-                status_text = f"🆔 **معلومات حسابك:**\n• الـ ID (سري): `{user_id}`\n• حالة الاشتراك: منتهي أو غير مفعل ❌"
+                status_text = f"🆔 **معلومات حسابك:**\n• الـ ID (سري): `{user_id}`\n• حالة الاشتراك: منتهي أو انتهت الفترة التجريبية ❌"
         try:
             await query.message.edit_text(status_text, parse_mode="Markdown", reply_markup=back_keyboard)
         except Exception:
-            await query.message.reply_text(status_text, parse_mode="Markdown", reply_markup=back_keyboard)
+            await query.message.reply_text(status_text, reply_markup=back_keyboard)
 
     elif query.data == 'support':
         text_sup = "📞 للتواصل المباشر مع الدعم الفني: @AdminUsername"
@@ -591,7 +654,7 @@ async def handle_tx_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(result, parse_mode="Markdown")
     else:
         if not is_user_active(user_id) and user_id != ADMIN_ID:
-            await update.message.reply_text("❌ يرجى اختيار باقة الاشتراك وإرسال رقم المعاملة (TxID) الصحيح الذي يبدأ بـ 0x لتفعيل الحساب تلقائياً.")
+            await update.message.reply_text("❌ انتهت فترتك المجانية. يرجى اختيار باقة الاشتراك وإرسال رقم المعاملة (TxID) لتفعيل الحساب.")
 
 def main():
     application = ApplicationBuilder().token(TOKEN).build()
@@ -607,8 +670,8 @@ def main():
 
     application.post_init = post_init
     
-    print("Bot is fully running with Long & Scalp engine...")
+    print("Bot is fully running with Trial & Long/Scalp engine...")
     application.run_polling()
 
-if __name__ == 'main__':
+if __name__ == '__main__':
     main()
